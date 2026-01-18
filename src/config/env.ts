@@ -4,6 +4,12 @@ import { z } from 'zod';
 // Load environment variables from .env file
 loadEnv();
 
+// Detect script mode from process.argv
+const scriptPath = process.argv[1] || '';
+const isGammaSearch = scriptPath.includes('gamma_search');
+const isGammaPick = scriptPath.includes('gamma_pick');
+const isGammaScript = isGammaSearch || isGammaPick;
+
 // Define the schema for environment variables
 const envSchema = z.object({
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -19,7 +25,8 @@ const envSchema = z.object({
     SPOT_BUFFER_SAMPLE_MS: z.coerce.number().int().positive().finite().default(250),
 
     // Polymarket Market Data
-    POLYMARKET_TOKEN_ID: z.string().min(1, 'POLYMARKET_TOKEN_ID is required'),
+    // Optional for gamma scripts, required for bot mode
+    POLYMARKET_TOKEN_ID: z.string().default(''),
     POLY_SNAPSHOT_INTERVAL_MS: z.coerce.number().int().positive().finite().default(5000),
     POLY_DEPTH_LEVELS: z.coerce.number().int().positive().finite().default(10),
 
@@ -38,6 +45,20 @@ const envSchema = z.object({
 function validateEnv() {
     try {
         const parsed = envSchema.parse(process.env);
+
+        // Additional validation: POLYMARKET_TOKEN_ID required for bot mode
+        if (!isGammaScript && !parsed.POLYMARKET_TOKEN_ID) {
+            console.error('❌ Invalid environment variables:');
+            console.error('  - POLYMARKET_TOKEN_ID: Required for bot mode');
+            console.error('');
+            console.error('To find a market:');
+            console.error('  1. Run: npm run gamma:search');
+            console.error('  2. Or run: npm run gamma:pick');
+            console.error('  3. Copy a token ID and set POLYMARKET_TOKEN_ID in .env');
+            console.error('');
+            process.exit(1);
+        }
+
         return parsed;
     } catch (error) {
         if (error instanceof z.ZodError) {

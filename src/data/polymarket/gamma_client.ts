@@ -71,13 +71,13 @@ export class GammaClient {
     /**
      * Fetch all active markets from events endpoint with pagination
      */
-    async fetchActiveMarkets(): Promise<GammaMarketSimplified[]> {
+    async fetchActiveMarkets(maxEvents: number = 3000): Promise<GammaMarketSimplified[]> {
         const allMarkets: GammaMarketSimplified[] = [];
         const batchSize = 100;
         let offset = 0;
         let hasMore = true;
 
-        while (hasMore && offset < 500) { // Safety limit: max 500 events
+        while (hasMore && offset < maxEvents) {
             const url = `${this.baseUrl}/events?active=true&closed=false&order=id&ascending=false&limit=${batchSize}&offset=${offset}`;
 
             logger.debug('gamma.events.request', {
