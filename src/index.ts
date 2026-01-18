@@ -2,10 +2,12 @@ import { env } from './config/env.js';
 import { logger } from './infra/logger.js';
 import { BinanceSpotFeed } from './data/spot/binance_ws.js';
 import { PolymarketFeed } from './data/polymarket/market_feed.js';
+// import { LatencySignalEngine } from './strategy/latency_signal.js'; // TODO: Connect to feeds
 
 // Global references to keep process alive
 let spotFeed: BinanceSpotFeed | null = null;
 let polyFeed: PolymarketFeed | null = null;
+// let signalEngine: LatencySignalEngine | null = null; // TODO: Connect to feeds
 
 /**
  * Main application entry point
@@ -31,7 +33,15 @@ async function main() {
     console.log(`\n🔹 Polymarket Configuration:`);
     console.log(`  🎲 Token ID: ${env.POLYMARKET_TOKEN_ID}`);
     console.log(`  ⏱️  Snapshot: ${env.POLY_SNAPSHOT_INTERVAL_MS}ms`);
-    console.log(`  📊 Depth Levels: ${env.POLY_DEPTH_LEVELS}\n`);
+    console.log(`  📊 Depth Levels: ${env.POLY_DEPTH_LEVELS}`);
+    console.log(`\n🎯 Arbitrage Strategy:`);
+    console.log(`  📏 Min Poly Depth: ${env.ARB_MIN_POLY_DEPTH}`);
+    console.log(`  📐 Max Poly Spread: ${env.ARB_MAX_POLY_SPREAD_BPS} bps`);
+    console.log(`  💰 Min Edge: ${env.ARB_MIN_EDGE_BPS} bps`);
+    console.log(`  ⏱️  Cooldown: ${env.ARB_COOLDOWN_MS}ms\n`);
+
+    // Initialize Strategy Engine (TODO: Connect to feeds)
+    // signalEngine = new LatencySignalEngine();
 
     // Initialize Binance Spot Feed
     spotFeed = new BinanceSpotFeed();
@@ -48,10 +58,10 @@ async function main() {
             logger: 'initialized',
             spotFeed: 'started',
             polyFeed: 'started',
+            signalEngine: 'available',
         },
     });
 
-    // Future: Initialize strategy engine
     // Future: Initialize execution module
 }
 

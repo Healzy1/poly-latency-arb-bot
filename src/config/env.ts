@@ -22,6 +22,16 @@ const envSchema = z.object({
     POLYMARKET_TOKEN_ID: z.string().min(1, 'POLYMARKET_TOKEN_ID is required'),
     POLY_SNAPSHOT_INTERVAL_MS: z.coerce.number().int().positive().finite().default(5000),
     POLY_DEPTH_LEVELS: z.coerce.number().int().positive().finite().default(10),
+
+    // Gamma Market Discovery
+    POLY_GAMMA_QUERY: z.string().optional(),
+    POLY_GAMMA_LIMIT: z.coerce.number().int().positive().finite().default(10),
+
+    // Arbitrage Strategy
+    ARB_MIN_POLY_DEPTH: z.coerce.number().positive().finite().default(50),
+    ARB_MAX_POLY_SPREAD_BPS: z.coerce.number().positive().finite().default(80),
+    ARB_MIN_EDGE_BPS: z.coerce.number().positive().finite().default(20),
+    ARB_COOLDOWN_MS: z.coerce.number().int().positive().finite().default(15000),
 });
 
 // Parse and validate environment variables

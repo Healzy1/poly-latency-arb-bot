@@ -8,7 +8,8 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "gamma:search": "tsx src/scripts/gamma_search.ts"
   },
   "keywords": [
     "arbitrage",
