@@ -1,4 +1,17 @@
 /**
+ * Gamma API event data
+ */
+export interface GammaEvent {
+    id: string;
+    slug: string;
+    title: string;
+    description?: string;
+    active: boolean;
+    closed: boolean;
+    markets?: GammaMarket[];
+}
+
+/**
  * Gamma API market data
  */
 export interface GammaMarket {
@@ -8,10 +21,12 @@ export interface GammaMarket {
     description?: string;
     active: boolean;
     closed: boolean;
-    outcomes: string[];
-    clobTokenIds: string[];
+    outcomes: string[] | string;
+    outcomePrices?: string[] | string;
+    clobTokenIds: string[] | string;
     liquidity?: number;
     volume?: number;
+    enableOrderBook?: boolean;
 }
 
 /**
@@ -26,4 +41,6 @@ export interface GammaMarketSimplified {
     clobTokenIds: string[];
     liquidity?: number;
     volume?: number;
+    enableOrderBook?: boolean;
+    tradability: 'confirmed' | 'unknown';
 }

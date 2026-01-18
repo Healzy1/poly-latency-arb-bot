@@ -18,7 +18,7 @@ if (!query) {
 }
 
 async function main() {
-    console.log('🔍 Searching Polymarket markets...');
+    console.log('🔍 Searching Polymarket active markets...');
     console.log(`Query: "${query}"`);
     console.log(`Limit: ${limit}`);
     console.log('');
@@ -26,47 +26,53 @@ async function main() {
     const client = new GammaClient();
 
     try {
+        // Search for markets matching query
         const markets = await client.searchMarkets(query!, limit);
 
-        if (markets.length === 0) {
-            console.log('No markets found.');
-            return;
-        }
+        if (markets.length > 0) {
+            console.log(`✅ Found ${markets.length} active market(s) matching "${query}"\n`);
+            console.log('='.repeat(80));
+            console.log('\n🟢 ACTIVE MARKETS (Ranked by Liquidity):\n');
 
-        // Separate active and closed markets
-        const activeMarkets = markets.filter(m => m.status === 'active');
-        const closedMarkets = markets.filter(m => m.status === 'closed');
-
-        console.log(`Found ${markets.length} market(s): ${activeMarkets.length} active, ${closedMarkets.length} closed\n`);
-        console.log('='.repeat(80));
-
-        // Display active markets first
-        if (activeMarkets.length > 0) {
-            console.log('\n🟢 ACTIVE MARKETS:\n');
-            activeMarkets.forEach((market, index) => {
+            markets.forEach((market, index) => {
                 displayMarket(market, index + 1);
             });
-        }
 
-        // Display closed markets
-        if (closedMarkets.length > 0) {
-            console.log('\n🔴 CLOSED MARKETS:\n');
-            closedMarkets.forEach((market, index) => {
-                displayMarket(market, activeMarkets.length + index + 1);
+            console.log('\n' + '='.repeat(80));
+            console.log('\n📝 To use a market:');
+            console.log('1. Choose a market from the list above');
+            console.log('2. Copy the Token ID for your desired outcome (usually YES or NO)');
+            console.log('3. Set it in your .env file:');
+            console.log('   POLYMARKET_TOKEN_ID=<token_id_here>');
+            console.log('4. Restart the bot: npm run dev');
+            console.log('');
+        } else {
+            // No matches - show fallback
+            console.log(`⚠️  No markets found matching "${query}"\n`);
+            console.log('Fetching top newest active markets as fallback...\n');
+
+            const allMarkets = await client.fetchActiveMarkets();
+            const topMarkets = allMarkets.slice(0, 10);
+
+            if (topMarkets.length === 0) {
+                console.log('❌ No active markets found at all. The API may be down or returning no data.');
+                return;
+            }
+
+            console.log(`📊 Top ${topMarkets.length} newest active markets (fallback):\n`);
+            console.log('='.repeat(80));
+            console.log('');
+
+            topMarkets.forEach((market, index) => {
+                displayMarket(market, index + 1);
             });
-        }
 
-        console.log('\n' + '='.repeat(80));
-        console.log('\n📝 To use a market:');
-        console.log('1. Choose an ACTIVE market from the list above');
-        console.log('2. Copy the Token ID for your desired outcome (usually YES or NO)');
-        console.log('3. Set it in your .env file:');
-        console.log('   POLYMARKET_TOKEN_ID=<token_id_here>');
-        console.log('4. Restart the bot: npm run dev');
-        console.log('');
-
-        if (closedMarkets.length > 0) {
-            console.log('⚠️  Note: Closed markets are shown for reference but cannot be traded.');
+            console.log('\n' + '='.repeat(80));
+            console.log('\n💡 Tip: Try searching for:');
+            console.log('  - "trump" or "election" for political markets');
+            console.log('  - "bitcoin" or "btc" for crypto markets');
+            console.log('  - "ethereum" or "eth" for Ethereum markets');
+            console.log('  - "sports" for sports betting markets');
             console.log('');
         }
     } catch (error) {
@@ -80,12 +86,19 @@ function displayMarket(market: any, index: number): void {
     console.log(`   Slug: ${market.slug}`);
     console.log(`   Status: ${market.status.toUpperCase()}`);
 
-    if (market.liquidity !== undefined && market.liquidity !== null) {
-        console.log(`   Liquidity: $${market.liquidity.toLocaleString()}`);
+    // Tradability indicator
+    if (market.enableOrderBook !== undefined) {
+        console.log(`   📊 Order Book: ${market.enableOrderBook ? 'ENABLED' : 'DISABLED'}`);
+    } else {
+        console.log(`   📊 Order Book: Unknown (likely tradable)`);
     }
 
-    if (market.volume !== undefined && market.volume !== null) {
-        console.log(`   Volume: $${market.volume.toLocaleString()}`);
+    if (market.liquidity !== undefined && market.liquidity !== null && market.liquidity > 0) {
+        console.log(`   💰 Liquidity: $${market.liquidity.toLocaleString()}`);
+    }
+
+    if (market.volume !== undefined && market.volume !== null && market.volume > 0) {
+        console.log(`   📈 Volume: $${market.volume.toLocaleString()}`);
     }
 
     // Display outcomes
@@ -95,14 +108,11 @@ function displayMarket(market: any, index: number): void {
         console.log(`   Outcomes: N/A`);
     }
 
-    // Display token IDs
+    // Display token IDs mapped to outcomes
     if (market.clobTokenIds && market.clobTokenIds.length > 0) {
         console.log(`   Token IDs:`);
 
-        // Match outcomes with token IDs
-        const maxLength = Math.max(market.outcomes?.length || 0, market.clobTokenIds.length);
-
-        for (let i = 0; i < maxLength; i++) {
+        for (let i = 0; i < market.clobTokenIds.length; i++) {
             const outcome = market.outcomes?.[i] || `Outcome ${i + 1}`;
             const tokenId = market.clobTokenIds[i];
 

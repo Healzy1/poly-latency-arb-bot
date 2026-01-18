@@ -1,10 +1,20 @@
 import { logger } from '../../infra/logger.js';
-import type { GammaMarket, GammaMarketSimplified } from './gamma_types.js';
+import type { GammaEvent, GammaMarket, GammaMarketSimplified } from './gamma_types.js';
 
 const GAMMA_BASE_URL = 'https://gamma-api.polymarket.com';
 
 /**
- * Gamma API Client for market discovery
+ * Query synonyms for better matching
+ */
+const QUERY_SYNONYMS: Record<string, string[]> = {
+    'bitcoin': ['btc'],
+    'btc': ['bitcoin'],
+    'ethereum': ['eth'],
+    'eth': ['ethereum'],
+};
+
+/**
+ * Gamma API Client for market discovery via Events endpoint
  */
 export class GammaClient {
     private baseUrl: string;
@@ -14,48 +24,41 @@ export class GammaClient {
     }
 
     /**
-     * Search markets by query
+     * Search active markets via Events endpoint
      */
     async searchMarkets(query: string, limit: number = 10): Promise<GammaMarketSimplified[]> {
         try {
-            const url = `${this.baseUrl}/markets?query=${encodeURIComponent(query)}&limit=${limit}`;
+            // Fetch active events with pagination
+            const allMarkets = await this.fetchActiveMarkets();
 
-            logger.debug('gamma.search.request', {
-                query,
-                limit,
-                url,
+            logger.info('gamma.events.fetched', {
+                totalMarkets: allMarkets.length,
             });
 
-            const response = await fetch(url);
+            // Filter by query (with synonyms)
+            const queryLower = query.toLowerCase();
+            const synonyms = QUERY_SYNONYMS[queryLower] || [];
+            const searchTerms = [queryLower, ...synonyms];
 
-            if (!response.ok) {
-                throw new Error(`Gamma API error: ${response.status} ${response.statusText}`);
-            }
-
-            const data = await response.json() as GammaMarket[];
-
-            const simplified: GammaMarketSimplified[] = [];
-
-            for (const market of data) {
-                try {
-                    const simplifiedMarket = this.simplifyMarket(market);
-                    simplified.push(simplifiedMarket);
-                } catch (error) {
-                    logger.warn('gamma.market.parse_error', {
-                        id: market.id,
-                        slug: market.slug,
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                    // Continue to next market instead of failing
-                }
-            }
-
-            logger.info('gamma.search.success', {
-                query,
-                resultsCount: simplified.length,
+            const matchedMarkets = allMarkets.filter(market => {
+                const questionLower = market.question.toLowerCase();
+                return searchTerms.some(term => questionLower.includes(term));
             });
 
-            return simplified;
+            logger.info('gamma.search.matched', {
+                query,
+                matchedCount: matchedMarkets.length,
+            });
+
+            // Sort by liquidity/volume
+            matchedMarkets.sort((a, b) => {
+                const scoreA = this.getMarketScore(a);
+                const scoreB = this.getMarketScore(b);
+                return scoreB - scoreA;
+            });
+
+            // Return top N
+            return matchedMarkets.slice(0, limit);
         } catch (error) {
             logger.error('gamma.search.error', {
                 query,
@@ -66,31 +69,190 @@ export class GammaClient {
     }
 
     /**
-     * Get market by slug
+     * Fetch all active markets from events endpoint with pagination
+     */
+    async fetchActiveMarkets(): Promise<GammaMarketSimplified[]> {
+        const allMarkets: GammaMarketSimplified[] = [];
+        const batchSize = 100;
+        let offset = 0;
+        let hasMore = true;
+
+        while (hasMore && offset < 500) { // Safety limit: max 500 events
+            const url = `${this.baseUrl}/events?active=true&closed=false&order=id&ascending=false&limit=${batchSize}&offset=${offset}`;
+
+            logger.debug('gamma.events.request', {
+                offset,
+                limit: batchSize,
+            });
+
+            try {
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(`Gamma API error: ${response.status} ${response.statusText}`);
+                }
+
+                const events = await response.json() as GammaEvent[];
+
+                if (events.length === 0) {
+                    hasMore = false;
+                    break;
+                }
+
+                // Flatten markets from events
+                for (const event of events) {
+                    if (!event.markets || !Array.isArray(event.markets)) {
+                        continue;
+                    }
+
+                    for (const market of event.markets) {
+                        try {
+                            // Filter for tradable markets
+                            if (this.isMarketTradable(event, market)) {
+                                const simplified = this.simplifyMarket(market);
+                                allMarkets.push(simplified);
+                            }
+                        } catch (error) {
+                            logger.warn('gamma.market.parse_error', {
+                                eventId: event.id,
+                                marketId: market.id,
+                                error: error instanceof Error ? error.message : String(error),
+                            });
+                        }
+                    }
+                }
+
+                offset += batchSize;
+
+                // If we got fewer than batchSize, we're done
+                if (events.length < batchSize) {
+                    hasMore = false;
+                }
+            } catch (error) {
+                logger.error('gamma.events.fetch_error', {
+                    offset,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                throw error;
+            }
+        }
+
+        logger.info('gamma.events.complete', {
+            totalMarkets: allMarkets.length,
+            eventsFetched: offset,
+        });
+
+        return allMarkets;
+    }
+
+    /**
+     * Check if market is tradable
+     */
+    private isMarketTradable(event: GammaEvent, market: GammaMarket): boolean {
+        // Event must be active and not closed
+        if (event.closed || !event.active) {
+            return false;
+        }
+
+        // Market must have token IDs
+        const tokenIds = this.parseArrayField(market.clobTokenIds);
+        if (tokenIds.length === 0) {
+            return false;
+        }
+
+        // If enableOrderBook exists, it must be true
+        // If it doesn't exist, we allow it (tradability: unknown)
+        if (market.enableOrderBook !== undefined && market.enableOrderBook === false) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Calculate market score for ranking
+     */
+    private getMarketScore(market: GammaMarketSimplified): number {
+        let score = 0;
+
+        if (market.liquidity && market.liquidity > 0) {
+            score += market.liquidity * 10;
+        }
+
+        if (market.volume && market.volume > 0) {
+            score += market.volume;
+        }
+
+        return score;
+    }
+
+    /**
+     * Simplify market data
+     */
+    private simplifyMarket(market: GammaMarket): GammaMarketSimplified {
+        const outcomes = this.parseArrayField(market.outcomes);
+        const clobTokenIds = this.parseArrayField(market.clobTokenIds);
+
+        return {
+            id: market.id,
+            slug: market.slug,
+            question: market.question,
+            status: market.closed ? 'closed' : 'active',
+            outcomes,
+            clobTokenIds,
+            liquidity: market.liquidity,
+            volume: market.volume,
+            enableOrderBook: market.enableOrderBook,
+            tradability: market.enableOrderBook !== undefined ? 'confirmed' : 'unknown',
+        };
+    }
+
+    /**
+     * Parse array field (handles string JSON or array)
+     */
+    private parseArrayField(field: unknown): string[] {
+        if (!field) {
+            return [];
+        }
+
+        // Already an array
+        if (Array.isArray(field)) {
+            return field.map(item => String(item));
+        }
+
+        // String that might be JSON
+        if (typeof field === 'string') {
+            try {
+                const parsed = JSON.parse(field);
+                if (Array.isArray(parsed)) {
+                    return parsed.map(item => String(item));
+                }
+                return [field];
+            } catch {
+                return [field];
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * Get market by slug (legacy method)
      */
     async getMarketBySlug(slug: string): Promise<GammaMarketSimplified | null> {
         try {
             const url = `${this.baseUrl}/markets/${slug}`;
 
-            logger.debug('gamma.get_market.request', {
-                slug,
-                url,
-            });
-
             const response = await fetch(url);
 
             if (!response.ok) {
                 if (response.status === 404) {
-                    logger.warn('gamma.get_market.not_found', { slug });
                     return null;
                 }
                 throw new Error(`Gamma API error: ${response.status} ${response.statusText}`);
             }
 
             const market = await response.json() as GammaMarket;
-
-            logger.info('gamma.get_market.success', { slug });
-
             return this.simplifyMarket(market);
         } catch (error) {
             logger.error('gamma.get_market.error', {
@@ -99,111 +261,5 @@ export class GammaClient {
             });
             throw error;
         }
-    }
-
-    /**
-     * Simplify market data for display with robust parsing
-     */
-    private simplifyMarket(market: GammaMarket): GammaMarketSimplified {
-        return {
-            id: market.id,
-            slug: market.slug,
-            question: market.question,
-            status: this.parseStatus(market),
-            outcomes: this.parseOutcomes(market.outcomes),
-            clobTokenIds: this.parseClobTokenIds(market.clobTokenIds),
-            liquidity: market.liquidity,
-            volume: market.volume,
-        };
-    }
-
-    /**
-     * Parse market status from various fields
-     */
-    private parseStatus(market: GammaMarket): 'active' | 'closed' {
-        // Check closed field first
-        if (market.closed === true) {
-            return 'closed';
-        }
-
-        // Check active field
-        if (market.active === false) {
-            return 'closed';
-        }
-
-        // Default to active if not explicitly closed
-        return 'active';
-    }
-
-    /**
-     * Parse outcomes array with robust handling
-     */
-    private parseOutcomes(outcomes: unknown): string[] {
-        // Handle null/undefined
-        if (!outcomes) {
-            return [];
-        }
-
-        // Handle array
-        if (Array.isArray(outcomes)) {
-            return outcomes.map(outcome => {
-                // If it's already a string
-                if (typeof outcome === 'string') {
-                    return outcome;
-                }
-
-                // If it's an object, try to extract name/label/outcome field
-                if (typeof outcome === 'object' && outcome !== null) {
-                    const obj = outcome as Record<string, unknown>;
-
-                    if (typeof obj.name === 'string') {
-                        return obj.name;
-                    }
-                    if (typeof obj.label === 'string') {
-                        return obj.label;
-                    }
-                    if (typeof obj.outcome === 'string') {
-                        return obj.outcome;
-                    }
-
-                    // Fallback to JSON stringify
-                    return JSON.stringify(outcome);
-                }
-
-                // Convert to string as fallback
-                return String(outcome);
-            });
-        }
-
-        // Handle single string
-        if (typeof outcomes === 'string') {
-            return [outcomes];
-        }
-
-        // Fallback to empty array
-        return [];
-    }
-
-    /**
-     * Parse clobTokenIds with robust handling
-     */
-    private parseClobTokenIds(clobTokenIds: unknown): string[] {
-        // Handle null/undefined
-        if (!clobTokenIds) {
-            return [];
-        }
-
-        // Handle array
-        if (Array.isArray(clobTokenIds)) {
-            return clobTokenIds.map(id => String(id));
-        }
-
-        // Handle single value
-        if (typeof clobTokenIds === 'string') {
-            return [clobTokenIds];
-        }
-
-        // Fallback to empty array
-        return [];
     }
 }
